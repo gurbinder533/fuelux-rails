@@ -2,12 +2,27 @@
  * Fuel UX Tree
  * https://github.com/ExactTarget/fuelux
  *
- * Copyright (c) 2012 ExactTarget
- * Licensed under the MIT license.
+ * Copyright (c) 2014 ExactTarget
+ * Licensed under the BSD New license.
  */
 
-!function ($) {
+// -- BEGIN UMD WRAPPER PREFACE --
 
+// For more information on UMD visit:
+// https://github.com/umdjs/umd/blob/master/jqueryPlugin.js
+
+(function (factory) {
+	if (typeof define === 'function' && define.amd) {
+		// if AMD loader is available, register as an anonymous module.
+		define(['jquery'], factory);
+	} else {
+		// OR use browser globals if AMD is not present
+		factory(jQuery);
+	}
+}(function ($) {
+	// -- END UMD WRAPPER PREFACE --
+
+	// -- BEGIN MODULE CODE HERE --
 
 	var old = $.fn.tree;
 
@@ -17,8 +32,25 @@
 		this.$element = $(element);
 		this.options = $.extend({}, $.fn.tree.defaults, options);
 
-		this.$element.on('click', '.tree-item', $.proxy( function(ev) { this.selectItem(ev.currentTarget); } ,this));
-		this.$element.on('click', '.tree-folder-header', $.proxy( function(ev) { this.selectFolder(ev.currentTarget); }, this));
+		if (this.options.itemSelect) {
+			this.$element.on('click.fu.tree', '.tree-item', $.proxy(function (ev) {
+				this.selectItem(ev.currentTarget);
+			}, this));
+		}
+
+		this.$element.on('click.fu.tree', '.tree-branch-name', $.proxy(function (ev) {
+			this.openFolder(ev.currentTarget);
+		}, this));
+
+		if (this.options.folderSelect) {
+			this.$element.off('click.fu.tree', '.tree-branch-name');
+			this.$element.on('click.fu.tree', '.icon-caret', $.proxy(function (ev) {
+				this.openFolder($(ev.currentTarget).parent());
+			}, this));
+			this.$element.on('click.fu.tree', '.tree-branch-name', $.proxy(function (ev) {
+				this.selectFolder($(ev.currentTarget));
+			}, this));
+		}
 
 		this.render();
 	};
@@ -26,153 +58,260 @@
 	Tree.prototype = {
 		constructor: Tree,
 
+		destroy: function () {
+			// any external bindings [none]
+			// empty elements to return to original markup
+			this.$element.find("li:not([data-template])").remove();
+
+			this.$element.remove();
+			// returns string of markup
+			return this.$element[0].outerHTML;
+		},
+
 		render: function () {
 			this.populate(this.$element);
 		},
 
 		populate: function ($el) {
 			var self = this;
-			var $parent = $el.parent();
+			var $parent = ($el.hasClass('tree')) ? $el : $el.parent();
 			var loader = $parent.find('.tree-loader:eq(0)');
+			var treeData = $parent.data();
 
-			loader.show();
-			this.options.dataSource.data($el.data(), function (items) {
-				loader.hide();
+			loader.removeClass('hide');
+			this.options.dataSource(treeData ? treeData : {}, function (items) {
+				loader.addClass('hide');
 
-				$.each( items.data, function(index, value) {
+				$.each(items.data, function (index, value) {
 					var $entity;
 
-					if(value.type === "folder") {
-						$entity = self.$element.find('.tree-folder:eq(0)').clone().show();
-						$entity.find('.tree-folder-name').html(value.name);
-						$entity.find('.tree-loader').html(self.options.loadingHTML);
-						$entity.find('.tree-folder-header').data(value);
-					} else if (value.type === "item") {
-						$entity = self.$element.find('.tree-item:eq(0)').clone().show();
-						$entity.find('.tree-item-name').html(value.name);
+					if (value.type === 'folder') {
+						$entity = self.$element.find('[data-template=treebranch]:eq(0)').clone().removeClass('hide').removeAttr('data-template');
+						$entity.data(value);
+						$entity.find('.tree-branch-name > .tree-label').html(value.text || value.name);
+					} else if (value.type === 'item') {
+						$entity = self.$element.find('[data-template=treeitem]:eq(0)').clone().removeClass('hide').removeAttr('data-template');
+						$entity.find('.tree-item-name > .tree-label').html(value.text || value.name);
 						$entity.data(value);
 					}
 
-					// Decorate $entity with data making the element
-					// easily accessable with libraries like jQuery.
+					// Decorate $entity with data or other attributes making the
+					// element easily accessable with libraries like jQuery.
 					//
 					// Values are contained within the object returned
-					// for folders and items as dataAttributes:
+					// for folders and items as attr:
 					//
 					// {
-					//     name: "An Item",
+					//     text: "An Item",
 					//     type: 'item',
-					//     dataAttributes = {
+					//     attr = {
 					//         'classes': 'required-item red-text',
 					//         'data-parent': parentId,
-					//         'guid': guid
+					//         'guid': guid,
+					//         'id': guid
 					//     }
 					// };
+					//
+					// the "name" attribute is also supported but is deprecated for "text".
 
-					var dataAttributes = value.dataAttributes || [];
-					$.each(dataAttributes, function(key, value) {
+					// add attributes to tree-branch or tree-item
+					var attr = value['attr'] || value.dataAttributes || [];
+					$.each(attr, function (key, value) {
 						switch (key) {
-						case 'class':
-						case 'classes':
-						case 'className':
-							$entity.addClass(value);
-							break;
+							case 'cssClass':
+							case 'class':
+							case 'className':
+								$entity.addClass(value);
+								break;
 
-						// id, style, data-*
-						default:
-							$entity.attr(key, value);
-							break;
+							// allow custom icons
+							case 'data-icon':
+								$entity.find('.icon-item').removeClass().addClass('icon-item ' + value);
+								$entity.attr(key, value);
+								break;
+
+							// ARIA support
+							case 'id':
+								$entity.attr(key, value);
+								$entity.attr('aria-labelledby', value + '-label');
+								$entity.find('.tree-branch-name > .tree-label').attr('id', value + '-label');
+								break;
+
+							// id, style, data-*
+							default:
+								$entity.attr(key, value);
+								break;
 						}
 					});
 
-					if($el.hasClass('tree-folder-header')) {
-						$parent.find('.tree-folder-content:eq(0)').append($entity);
+					// add child nodes
+					if ($el.hasClass('tree-branch-header')) {
+						$parent.find('.tree-branch-children:eq(0)').append($entity);
 					} else {
 						$el.append($entity);
 					}
 				});
 
 				// return newly populated folder
-				self.$element.trigger('loaded', $parent);
+				self.$element.trigger('loaded.fu.tree', $parent);
 			});
 		},
 
 		selectItem: function (el) {
+			if (!this.options.itemSelect) return;
 			var $el = $(el);
+			var selData = $el.data();
 			var $all = this.$element.find('.tree-selected');
 			var data = [];
+			var $icon = $el.find('.icon-item');
 
 			if (this.options.multiSelect) {
-				$.each($all, function(index, value) {
+				$.each($all, function (index, value) {
 					var $val = $(value);
-					if($val[0] !== $el[0]) {
-						data.push( $(value).data() );
+					if ($val[0] !== $el[0]) {
+						data.push($(value).data());
 					}
 				});
 			} else if ($all[0] !== $el[0]) {
 				$all.removeClass('tree-selected')
-					.find('i').removeClass('icon-ok').addClass('tree-dot');
-				data.push($el.data());
+					.find('.glyphicon').removeClass('glyphicon-ok').addClass('fueluxicon-bullet');
+				data.push(selData);
 			}
 
 			var eventType = 'selected';
-			if($el.hasClass('tree-selected')) {
-				eventType = 'unselected';
+			if ($el.hasClass('tree-selected')) {
+				eventType = 'deselected';
 				$el.removeClass('tree-selected');
-				$el.find('i').removeClass('icon-ok').addClass('tree-dot');
+				if ($icon.hasClass('glyphicon-ok') || $icon.hasClass('fueluxicon-bullet')) {
+					$icon.removeClass('glyphicon-ok').addClass('fueluxicon-bullet');
+				}
+
 			} else {
 				$el.addClass ('tree-selected');
-				$el.find('i').removeClass('tree-dot').addClass('icon-ok');
-				if (this.options.multiSelect) {
-					data.push( $el.data() );
+				// add tree dot back in
+				if ($icon.hasClass('glyphicon-ok') || $icon.hasClass('fueluxicon-bullet')) {
+					$icon.removeClass('fueluxicon-bullet').addClass('glyphicon-ok');
 				}
+
+				if (this.options.multiSelect) {
+					data.push(selData);
+				}
+
 			}
 
-			if(data.length) {
-				this.$element.trigger('selected', {info: data});
-			}
+			this.$element.trigger(eventType + '.fu.tree', {
+				target: selData,
+				selected: data
+			});
 
 			// Return new list of selected items, the item
 			// clicked, and the type of event:
-			$el.trigger('updated', {
-				info: data,
+			$el.trigger('updated.fu.tree', {
+				selected: data,
 				item: $el,
 				eventType: eventType
 			});
 		},
 
-		selectFolder: function (el) {
-			var $el = $(el);
-			var $parent = $el.parent();
-			var $treeFolderContent = $parent.find('.tree-folder-content');
-			var $treeFolderContentFirstChild = $treeFolderContent.eq(0);
+		openFolder: function (el) {
+			var $el = $(el);// tree-branch-name
+			var $branch;
+			var $treeFolderContent;
+			var $treeFolderContentFirstChild;
 
+			// if item select only
+			if (!this.options.folderSelect) {
+				$el = $(el).parent();// tree-branch, if tree-branch-name clicked
+			}
+
+			$branch = $el.closest('.tree-branch');// tree branch
+			$treeFolderContent = $branch.find('.tree-branch-children');
+			$treeFolderContentFirstChild = $treeFolderContent.eq(0);
+
+			// manipulate branch/folder
 			var eventType, classToTarget, classToAdd;
-			if ($el.find('.icon-folder-close').length) {
+			if ($el.find('.glyphicon-folder-close').length) {
 				eventType = 'opened';
-				classToTarget = '.icon-folder-close';
-				classToAdd = 'icon-folder-open';
+				classToTarget = '.glyphicon-folder-close';
+				classToAdd = 'glyphicon-folder-open';
 
-				$treeFolderContentFirstChild.show();
+				$branch.addClass('tree-open');
+				$branch.attr('aria-expanded', 'true');
+
+				$treeFolderContentFirstChild.removeClass('hide');
 				if (!$treeFolderContent.children().length) {
-					this.populate($el);
+					this.populate($treeFolderContent);
 				}
-			} else {
-				eventType = 'closed';
-				classToTarget = '.icon-folder-open';
-				classToAdd = 'icon-folder-close';
 
-				$treeFolderContentFirstChild.hide();
+			} else if ($el.find('.glyphicon-folder-open')) {
+				eventType = 'closed';
+				classToTarget = '.glyphicon-folder-open';
+				classToAdd = 'glyphicon-folder-close';
+
+				$branch.removeClass('tree-open');
+				$branch.attr('aria-expanded', 'false');
+				$treeFolderContentFirstChild.addClass('hide');
+
+				// remove if no cache
 				if (!this.options.cacheItems) {
 					$treeFolderContentFirstChild.empty();
 				}
+
 			}
 
-			$parent.find(classToTarget).eq(0)
-				.removeClass('icon-folder-close icon-folder-open')
+			$branch.find('> .tree-branch-header .icon-folder').eq(0)
+				.removeClass('glyphicon-folder-close glyphicon-folder-open')
 				.addClass(classToAdd);
 
-			this.$element.trigger(eventType, $el.data());
+			this.$element.trigger(eventType + '.fu.tree', $branch.data());
+		},
+
+		selectFolder: function (clickedElement) {
+			if (!this.options.folderSelect) return;
+			var $clickedElement = $(clickedElement);
+			var $clickedBranch = $clickedElement.closest('.tree-branch');
+			var $selectedBranch = this.$element.find('.tree-branch.tree-selected');
+			var clickedData = $clickedBranch.data();
+			var selectedData = [];
+			var eventType = 'selected';
+
+			// select clicked item
+			if ($clickedBranch.hasClass('tree-selected')) {
+				eventType = 'deselected';
+				$clickedBranch.removeClass('tree-selected');
+			} else {
+				$clickedBranch.addClass('tree-selected');
+			}
+
+			if (this.options.multiSelect) {
+				// get currently selected
+				$selectedBranch = this.$element.find('.tree-branch.tree-selected');
+
+				$.each($selectedBranch, function (index, value) {
+					var $value = $(value);
+					if ($value[0] !== $clickedElement[0]) {
+						selectedData.push($(value).data());
+					}
+				});
+
+			} else if ($selectedBranch[0] !== $clickedElement[0]) {
+				$selectedBranch.removeClass('tree-selected');
+
+				selectedData.push(clickedData);
+			}
+
+			this.$element.trigger(eventType + '.fu.tree', {
+				target: clickedData,
+				selected: selectedData
+			});
+
+			// Return new list of selected items, the item
+			// clicked, and the type of event:
+			$clickedElement.trigger('updated.fu.tree', {
+				selected: selectedData,
+				item: $clickedElement,
+				eventType: eventType
+			});
 		},
 
 		selectedItems: function () {
@@ -198,9 +337,9 @@
 
 				// "close" or empty folder contents
 				var $parent = $this.parent().parent();
-				var $folder = $parent.children('.tree-folder-content');
+				var $folder = $parent.children('.tree-branch-children');
 
-				$folder.hide();
+				$folder.addClass('hide');
 				if (!cacheItems) {
 					$folder.empty();
 				}
@@ -212,25 +351,32 @@
 	// TREE PLUGIN DEFINITION
 
 	$.fn.tree = function (option) {
-		var args = Array.prototype.slice.call( arguments, 1 );
+		var args = Array.prototype.slice.call(arguments, 1);
 		var methodReturn;
 
 		var $set = this.each(function () {
-			var $this   = $( this );
-			var data    = $this.data( 'tree' );
+			var $this = $(this);
+			var data = $this.data('fu.tree');
 			var options = typeof option === 'object' && option;
 
-			if( !data ) $this.data('tree', (data = new Tree( this, options ) ) );
-			if( typeof option === 'string' ) methodReturn = data[ option ].apply( data, args );
+			if (!data) {
+				$this.data('fu.tree', (data = new Tree(this, options)));
+			}
+
+			if (typeof option === 'string') {
+				methodReturn = data[option].apply(data, args);
+			}
 		});
 
-		return ( methodReturn === undefined ) ? $set : methodReturn;
+		return (methodReturn === undefined) ? $set : methodReturn;
 	};
 
 	$.fn.tree.defaults = {
+		dataSource: function (options, callback) {},
 		multiSelect: false,
-		loadingHTML: '<div>Loading...</div>',
-		cacheItems: true
+		cacheItems: true,
+		folderSelect: true,
+		itemSelect: true
 	};
 
 	$.fn.tree.Constructor = Tree;
@@ -239,4 +385,10 @@
 		$.fn.tree = old;
 		return this;
 	};
-}(window.jQuery);
+
+
+	// NO DATA-API DUE TO NEED OF DATA-SOURCE
+
+	// -- BEGIN UMD WRAPPER AFTERWORD --
+}));
+// -- END UMD WRAPPER AFTERWORD --

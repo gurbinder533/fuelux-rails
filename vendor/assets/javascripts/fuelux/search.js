@@ -2,12 +2,27 @@
  * Fuel UX Search
  * https://github.com/ExactTarget/fuelux
  *
- * Copyright (c) 2012 ExactTarget
- * Licensed under the MIT license.
+ * Copyright (c) 2014 ExactTarget
+ * Licensed under the BSD New license.
  */
 
-!function ($) {
+// -- BEGIN UMD WRAPPER PREFACE --
 
+// For more information on UMD visit:
+// https://github.com/umdjs/umd/blob/master/jqueryPlugin.js
+
+(function (factory) {
+	if (typeof define === 'function' && define.amd) {
+		// if AMD loader is available, register as an anonymous module.
+		define(['jquery'], factory);
+	} else {
+		// OR use browser globals if AMD is not present
+		factory(jQuery);
+	}
+}(function ($) {
+	// -- END UMD WRAPPER PREFACE --
+
+	// -- BEGIN MODULE CODE HERE --
 
 	var old = $.fn.search;
 
@@ -17,14 +32,14 @@
 		this.$element = $(element);
 		this.options = $.extend({}, $.fn.search.defaults, options);
 
-		this.$button = this.$element.find('button')
-			.on('click', $.proxy(this.buttonclicked, this));
+		this.$button = this.$element.find('button');
+		this.$input = this.$element.find('input');
+		this.$icon = this.$element.find('.glyphicon');
 
-		this.$input = this.$element.find('input')
-			.on('keydown', $.proxy(this.keypress, this))
-			.on('keyup', $.proxy(this.keypressed, this));
+		this.$button.on('click.fu.search', $.proxy(this.buttonclicked, this));
+		this.$input.on('keydown.fu.search', $.proxy(this.keypress, this));
+		this.$input.on('keyup.fu.search', $.proxy(this.keypressed, this));
 
-		this.$icon = this.$element.find('i');
 		this.activeSearch = '';
 	};
 
@@ -32,22 +47,44 @@
 
 		constructor: Search,
 
+		destroy: function () {
+			this.$element.remove();
+			// any external bindings
+			// [none]
+			// set input value attrbute
+			this.$element.find('input').each(function () {
+				$(this).attr('value', $(this).val());
+			});
+			// empty elements to return to original markup
+			// [none]
+			// returns string of markup
+			return this.$element[0].outerHTML;
+		},
+
 		search: function (searchText) {
-			this.$icon.attr('class', 'icon-remove');
+			if (this.$icon.hasClass('glyphicon')) {
+				this.$icon.removeClass('glyphicon-search').addClass('glyphicon-remove');
+			}
+
 			this.activeSearch = searchText;
-			this.$element.trigger('searched', searchText);
+			this.$element.addClass('searched');
+			this.$element.trigger('searched.fu.search', searchText);
 		},
 
 		clear: function () {
-			this.$icon.attr('class', 'icon-search');
+			if (this.$icon.hasClass('glyphicon')) {
+				this.$icon.removeClass('glyphicon-remove').addClass('glyphicon-search');
+			}
+
 			this.activeSearch = '';
 			this.$input.val('');
-			this.$element.trigger('cleared');
+			this.$element.removeClass('searched');
+			this.$element.trigger('cleared.fu.search');
 		},
 
 		action: function () {
 			var val = this.$input.val();
-			var inputEmptyOrUnchanged = val === '' || val === this.activeSearch;
+			var inputEmptyOrUnchanged = (val === '' || val === this.activeSearch);
 
 			if (this.activeSearch && inputEmptyOrUnchanged) {
 				this.clear();
@@ -69,50 +106,73 @@
 		},
 
 		keypressed: function (e) {
-			var val, inputPresentAndUnchanged;
+			var remove = 'glyphicon-remove';
+			var search = 'glyphicon-search';
+			var val;
 
 			if (e.which === 13) {
 				e.preventDefault();
 				this.action();
+			} else if (e.which === 9) {
+				e.preventDefault();
 			} else {
 				val = this.$input.val();
-				inputPresentAndUnchanged = val && (val === this.activeSearch);
-				this.$icon.attr('class', inputPresentAndUnchanged ? 'icon-remove' : 'icon-search');
+
+				if (val !== this.activeSearch || !val) {
+					this.$icon.removeClass(remove).addClass(search);
+					if (val) {
+						this.$element.removeClass('searched');
+					} else if (this.options.clearOnEmpty) {
+						this.clear();
+					}
+
+				} else {
+					this.$icon.removeClass(search).addClass(remove);
+				}
+
 			}
 		},
 
 		disable: function () {
+			this.$element.addClass('disabled');
 			this.$input.attr('disabled', 'disabled');
 			this.$button.addClass('disabled');
 		},
 
 		enable: function () {
+			this.$element.removeClass('disabled');
 			this.$input.removeAttr('disabled');
 			this.$button.removeClass('disabled');
 		}
-
 	};
 
 
 	// SEARCH PLUGIN DEFINITION
 
 	$.fn.search = function (option) {
-		var args = Array.prototype.slice.call( arguments, 1 );
+		var args = Array.prototype.slice.call(arguments, 1);
 		var methodReturn;
 
 		var $set = this.each(function () {
-			var $this = $( this );
-			var data = $this.data( 'search' );
+			var $this = $(this);
+			var data = $this.data('fu.search');
 			var options = typeof option === 'object' && option;
 
-			if (!data) $this.data('search', (data = new Search(this, options)));
-			if (typeof option === 'string') methodReturn = data[ option ].apply( data, args );
+			if (!data) {
+				$this.data('fu.search', (data = new Search(this, options)));
+			}
+
+			if (typeof option === 'string') {
+				methodReturn = data[option].apply(data, args);
+			}
 		});
 
-		return ( methodReturn === undefined ) ? $set : methodReturn;
+		return (methodReturn === undefined) ? $set : methodReturn;
 	};
 
-	$.fn.search.defaults = {};
+	$.fn.search.defaults = {
+		clearOnEmpty: false
+	};
 
 	$.fn.search.Constructor = Search;
 
@@ -122,13 +182,24 @@
 	};
 
 
-	// SEARCH DATA-API
+	// DATA-API
 
+	$(document).on('mousedown.fu.search.data-api', '[data-initialize=search]', function (e) {
+		var $control = $(e.target).closest('.search');
+		if (!$control.data('fu.search')) {
+			$control.search($control.data());
+		}
+	});
+
+	// Must be domReady for AMD compatibility
 	$(function () {
-		$('body').on('mousedown.search.data-api', '.search', function () {
+		$('[data-initialize=search]').each(function () {
 			var $this = $(this);
-			if ($this.data('search')) return;
+			if ($this.data('fu.search')) return;
 			$this.search($this.data());
 		});
 	});
-}(window.jQuery);
+
+	// -- BEGIN UMD WRAPPER AFTERWORD --
+}));
+// -- END UMD WRAPPER AFTERWORD --
